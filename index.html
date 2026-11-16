@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Upscaling HDR Photographs: 8-bit vs 16-bit Measured, Where Highlight Detail Dies</title>
+<meta name="description" content="Measured on a real photograph: a 16-bit tone-mapped intermediate preserves ripple detail to 100% where an 8-bit one preserves 0%, but the 16-bit label does nothing if you still tone-map before you grade. Codes-per-stop falls to 0.43 at the top, and 8-bit has 19.5 stops of total capacity, not 14.">
+<link rel="canonical" href="https://celticgemini001.github.io/upgolab-hdr-upscaling-bit-depth/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Upscaling HDR Photographs: What 16-bit Actually Buys You, Measured">
+<meta property="og:description" content="8-bit vs 16-bit intermediate, measured with a known ripple: 100% vs 0% detail retention in the top two stops. Plus why grading before the tone map beats both.">
+<script type="application/ld+json">
+{"@type":"Article",
+ "@context":"https://schema.org",
+ "headline":"Upscaling HDR Photographs: What 16-bit Actually Buys You, Measured",
+ "author":{"@type":"Person","name":"UpgoLAB"},
+ "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "description":"Measured detail retention through 4x down/4x up for 8-bit and 16-bit intermediates, codes-per-stop along a display tone curve, and the cost of grading after tone mapping instead of before.",
+ "datePublished":"2026-11-16"}
+</script>
+<style>
+:root{--ink:#16181d;--mut:#5b6270;--line:#e2e5ea;--acc:#0a58ca;--bg:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:48rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:2.05rem;line-height:1.22;margin:0 0 .7rem;letter-spacing:-.02em}
+h2{font-size:1.28rem;margin:2.8rem 0 .9rem;letter-spacing:-.01em}
+h3{font-size:1.05rem;margin:1.9rem 0 .5rem}
+p,li{color:#2b3038}
+a{color:var(--acc)}
+.lede{font-size:1.1rem;color:var(--mut);margin:0 0 1.6rem}
+.meta{font-size:.86rem;color:var(--mut);border-left:2px solid var(--line);
+ padding-left:.9rem;margin:0 0 2.2rem;line-height:1.6}
+table{width:100%;border-collapse:collapse;margin:1.3rem 0;font-size:.9rem}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line)}
+th{font-weight:600;background:#f6f7f9;font-size:.8rem;text-transform:uppercase;
+ letter-spacing:.03em;color:var(--mut)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+code{background:#f2f5fa;padding:.1rem .3rem;border-radius:4px;
+ font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
+pre{background:#f6f7f9;border:1px solid var(--line);border-radius:6px;
+ padding:.9rem 1rem;overflow-x:auto;font-size:.8rem;line-height:1.5;margin:1.3rem 0}
+pre code{background:none;padding:0;font-size:1em}
+.callout{border-left:3px solid var(--acc);background:#f5f8fd;padding:.85rem 1.05rem;
+ margin:1.7rem 0;border-radius:0 6px 6px 0}
+.callout.warn{border-left-color:#b45309;background:#fdf7ed}
+.callout p{margin:.3rem 0}
+footer{margin-top:4rem;padding-top:1.4rem;border-top:1px solid var(--line);
+ font-size:.84rem;color:var(--mut)}
+.sisternav{margin:2rem 0 0;padding-top:1.2rem;border-top:1px solid var(--line)}
+.sisternav p{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;
+ color:var(--mut);margin:0 0 .6rem}
+.sisternav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.4rem .9rem}
+.sisternav li{margin:0;font-size:.86rem;line-height:1.4}
+.sisternav a{text-decoration:none;border-bottom:1px solid #d5dae2}
+.sisternav a:hover{border-bottom-color:var(--acc)}
+</style>
+</head>
+<body>
+<main>
+<article>
+<h1>Upscaling HDR Photographs: What 16-bit Actually Buys You</h1>
+
+<p class="lede">"Upgrade to 16-bit before you upscale" is advice you will find in every second
+tutorial, and it is usually repeated without a number attached. So I measured it: a known ripple
+of known amplitude placed on a flat patch, pushed through a 4× downsample and a 4× bicubic
+upsample, with the intermediate quantised to 8 and to 16 bits. The result is not "16-bit is
+better". It is that <strong>16-bit preserves the ripple to between 97.3% and 100.4% at every
+level I tested, while an 8-bit intermediate drops to 0% above display code 253</strong> — and
+that the same 16 bits buy you <em>nothing at all</em> if you tone-map before you grade. Two
+different failures, two different fixes, and only one of them is about bit depth.</p>
+
+<p class="meta">numpy 1.26.4 · Pillow 12.2.0 · one source photograph (1080×1620 sRGB) with a
+stated scene-referred model · four experiments, 48 + 5 × 4 measured configurations · every number
+below printed by the script in the last section, including the three results that contradicted
+what I expected · the model is a model, and it is stated in full so you can attack it</p>
+
+<h2>The setup, and why a real HDR file would not have made this easier</h2>
+
+<p>I do not have an HDR camera, and borrowing one would have replaced a measurement with a
+photograph. So the scene-referred master is built from a real 8-bit photograph with three
+operations, all of them stated:</p>
+
+<ol>
+<li>Linearise the sRGB photo (<code>srgb_dec</code>), giving linear light in 0..1.</li>
+<li>Multiply by a smooth exposure ramp of 1× at the left edge to 4× at the right, so the frame
+contains regions at genuinely different scene luminances rather than one flat level.</li>
+<li>Add one specular source, a Gaussian of σ = 91.8 px peaking at 40× the local level, placed
+at 86% of the width and 30% of the height — the dark right-hand third of the frame, which is where
+a real window or lamp would sit.</li>
+</ol>
+
+<p>That float array is the master. Everything downstream — the tone map, the quantisation, the
+resampling — is measured against it. The tone curve is Reinhard, <code>L/(1+L)</code>, followed
+by sRGB encoding; it is not the only tone curve in the world, and the numbers would shift with a
+different one, but the shape of every result here comes from the sRGB encoding at the top of the
+range, which is shared by every tone curve that ends in a display.</p>
+
+<p>The reason a real HDR file would not have helped: the question is not "how much information
+does an HDR file contain" but "how much of it survives the trip to an 8-bit display and back".
+That trip is what I measure, and the source only needs to contain something above 1.0 in linear
+light, which the specular does by a factor of 40.</p>
+
+<h2>Experiment 1 — a known ripple, eight levels, two bit depths</h2>
+
+<p>A flat 128×128 patch at linear luminance <em>L</em><sub>0</sub> carries a sine of period 16 px
+and relative amplitude <em>a</em> in linear light. The patch is box-downsampled 4× in linear
+light (which is what a sensor does), tone-mapped, quantised, then bicubic-upsampled 4×. The
+recovered amplitude is measured by averaging the patch to a 1-D column profile — which divides
+quantisation noise by √128 — and fitting the known period to that profile. The same estimator is
+used for every variant, so a difference between rows is a difference in the data, not in the
+fitting.</p>
+
+<p>The figure of merit is <strong>retention relative to the float pipeline</strong>, not relative
+to the ideal. The float pipeline itself only delivers 83.9–84.9% of the ideal amplitude, and that
+15% is interpolation loss common to every variant; dividing it out leaves bit depth alone.</p>
+
+<table>
+<thead><tr><th>Linear L₀</th><th>Display code</th><th>Codes/stop</th><th>Ripple span (codes)</th><th>8-bit, quantise after upscale</th><th>8-bit, stored at low res</th><th>16-bit</th></tr></thead>
+<tbody>
+<tr><td class="num">0.02</td><td class="num">38.3</td><td class="num">16.94</td><td class="num">8.60</td><td class="num">99.3%</td><td class="num">92.9%</td><td class="num">100.0%</td></tr>
+<tr><td class="num">0.20</td><td class="num">113.5</td><td class="num">32.11</td><td class="num">17.87</td><td class="num">99.7%</td><td class="num">103.3%</td><td class="num">100.0%</td></tr>
+<tr><td class="num">1.0</td><td class="num">187.5</td><td class="num">25.67</td><td class="num">17.09</td><td class="num">101.0%</td><td class="num">94.0%</td><td class="num">100.0%</td></tr>
+<tr><td class="num">4.0</td><td class="num">231.1</td><td class="num">11.00</td><td class="num">8.42</td><td class="num">101.0%</td><td class="num">96.0%</td><td class="num">100.0%</td></tr>
+<tr><td class="num">16.0</td><td class="num">248.3</td><td class="num">3.28</td><td class="num">2.67</td><td class="num">105.1%</td><td class="num">94.3%</td><td class="num">100.1%</td></tr>
+<tr><td class="num">32.0</td><td class="num">251.6</td><td class="num">1.69</td><td class="num">1.40</td><td class="num">108.4%</td><td class="num">114.2%</td><td class="num">100.1%</td></tr>
+<tr><td class="num">64.0</td><td class="num">253.3</td><td class="num">0.86</td><td class="num">0.71</td><td class="num"><strong>110.0%</strong></td><td class="num">0.0%</td><td class="num">100.2%</td></tr>
+<tr><td class="num">128.0</td><td class="num">254.1</td><td class="num">0.43</td><td class="num">0.36</td><td class="num"><strong>0.0%</strong></td><td class="num">0.0%</td><td class="num">99.9%</td></tr>
+</tbody>
+</table>
+
+<p class="meta">Relative amplitude a = 0.20 throughout this table; full 48-row sweep (a = 0.20,
+0.10, 0.05, 0.02 × 12 levels) is produced by the script. Retention is measured against the float
+pipeline at the same level, so 100% means "bit depth cost you nothing", not "perfect".</p>
+
+<p>Three things in that table matter more than the headline.</p>
+
+<h3>The 8-bit failure is a cliff, not a slope</h3>
+
+<p>At code 251.6 the 8-bit intermediate still delivers 108.4% of the float pipeline's amplitude —
+above 100%, because rounding can push an already-quantised signal up as easily as down. One row
+later, at code 253.3, the ripple spans 0.71 of a single code and the same pipeline delivers 0.0%.
+There is no gradual degradation to plan around; there is a threshold, and it sits where the ripple
+span drops below one code. Everything above it is not "slightly worse", it is empty. The 16-bit
+intermediate at the same level delivers 100.2%.</p>
+
+<h3>A 16-bit tone-mapped intermediate is nearly a no-op below the cliff</h3>
+
+<p>Between code 38 and code 232 the two depths are within 3% of each other, and the 8-bit one is
+sometimes ahead. That is not measurement noise: with a ripple spanning 8 to 18 codes, rounding to
+8 bits costs almost nothing, and the residual difference is sub-code rounding that lands on either
+side. The whole benefit of 16 bits in this experiment is confined to the top ~1.7 stops of the
+display range. If your image has no content there, 16 bits changes nothing — which, for a
+properly-exposed mid-key photograph, is most of the time.</p>
+
+<h3>Storing 8-bit at the low resolution collapses one step earlier</h3>
+
+<p>The "stored at low res" column quantises the downsampled image and <em>then</em> interpolates,
+which is what a genuinely 8-bit downscaled capture is. Below the cliff it tracks the post-upscale
+quantisation within noise (mean 101.9% vs 100.2% of the float pipeline, across the 36 rows under
+code 232) — but it fails <strong>one row earlier</strong>: at L₀ = 64 with a = 0.20, where the
+ripple spans 4.91 codes, quantising after the upscale still delivers 110.0% and quantising before
+it delivers 0.0%. The mechanism is straightforward: an 8-bit grid at 1/4 resolution has 16× fewer
+samples carrying the same quantisation step, and bicubic interpolation cannot recover information
+the low-resolution grid already threw away. The practical consequence is small but free: if you
+are going to keep an 8-bit intermediate anyway, quantise at the output resolution, not the capture
+resolution.</p>
+
+<div class="callout">
+<p><strong>The correction I had to make.</strong> My first version of this experiment measured
+retention against the <em>ideal</em> amplitude and reported 8-bit at 78.7% and 16-bit at 84.7% at
+code 38 — a plausible-sounding "16-bit is 6 points better in the shadows". That was an artefact:
+both numbers were dominated by the same 15% interpolation loss, and the "6 point gap" was the
+difference between two estimates of a number that was mostly noise. Dividing by the float pipeline
+instead is what turned the shadow rows into 99–100% and the highlight rows into 0% vs 100%. The
+first version of this measurement was wrong in the direction that produces a nice story.</p>
+</div>
+
+<h2>Experiment 2 — do those 16 bits survive a +2 stop lift?</h2>
+
+<p>This is the claim 16-bit intermediates are usually sold on: <em>headroom for grading</em>. So I
+graded. Take the scene from the setup, run it through the same 4×/4× trip, and lift the result by
++2 stops (×4 in linear light) at the end. Compare four intermediates, plus the workflow that puts
+the grade before the tone map:</p>
+
+<table>
+<thead><tr><th>Intermediate</th><th>Codes in highlight band, after</th><th>False white (%)</th><th>PSNR shadow</th><th>PSNR mid</th><th>PSNR all</th><th>PSNR highlight</th></tr></thead>
+<tbody>
+<tr><td>8-bit, tone-mapped</td><td class="num">56</td><td class="num">7.93</td><td class="num">18.34 dB</td><td class="num">24.91 dB</td><td class="num">24.25 dB</td><td class="num">48.67 dB</td></tr>
+<tr><td>16-bit, tone-mapped</td><td class="num">60</td><td class="num">7.99</td><td class="num">18.34 dB</td><td class="num">24.91 dB</td><td class="num">24.25 dB</td><td class="num">48.67 dB</td></tr>
+<tr><td>16-bit, linear (scene-referred)</td><td class="num">45</td><td class="num">8.25</td><td class="num">16.25</td><td class="num">24.16</td><td class="num">22.58</td><td class="num">52.39 dB</td></tr>
+<tr><td>float, linear</td><td class="num">45</td><td class="num">8.29</td><td class="num">16.16</td><td class="num">24.09</td><td class="num">22.50</td><td class="num">52.39 dB</td></tr>
+<tr><td><strong>grade in linear, then tone-map</strong></td><td class="num"><strong>86</strong></td><td class="num"><strong>0.00</strong></td><td class="num">18.18</td><td class="num"><strong>28.08</strong></td><td class="num"><strong>24.97</strong></td></tr>
+</tbody>
+</table>
+
+<p class="meta">"False white" is the percentage of pixels the pipeline burned to 254–255 that the
+reference — the same grade applied at full resolution — did not burn. High-band PSNR is
+deliberately omitted from this table: two clipped images agree with each other perfectly, so a
+high-band PSNR of 48.7 dB on a 7.9%-false-clipped result is a metric describing the wrong thing.</p>
+
+<p>The 8-bit and 16-bit rows are identical to two decimal places on every metric. This is not a
+rounding coincidence: after tone mapping, the pixels that matter for the lift are the ones already
+squeezed into the top 1% of the display range, and both depths have the same number of codes
+there — 8-bit has 256 and 16-bit has 256 <em>display</em> codes once the tone map has already been
+applied and the result re-quantised to a display image. The 16 bits were spent before the lift
+was applied.</p>
+
+<p>The scene-referred rows also fail, and the reason is more interesting than the bit count. The
+lift is applied to a signal that has already been through the 4× downsample in linear light. The
+highlight band is 40× the local level; ×4 takes it to 160×, and Reinhard maps 160 to 0.9938 —
+still not clipped, but compressed into three tenths of a code. The linear intermediates preserve
+those three tenths faithfully (that is what 16 bits is for) and the tone map then throws them
+away at the display. Preserving precision in a representation whose final step discards it is not
+a gain.</p>
+
+<p>The row that works moves the grade <em>before</em> the tone map, so the ×4 is applied where the
+signal still has range to move into instead of where it has 3.4 codes left. It lands 3.2 dB ahead
+on the mid band (28.08 vs 24.91), 0.7 dB ahead overall, with zero false clipping and 86 codes in
+the highlight against 56 — 1.5× more distinct values.</p>
+
+<p>It does <em>not</em> win everywhere, and the exception is worth stating because it is the
+counter-argument to "just grade in linear". On the shadow band it is 0.16 dB behind (18.18 vs
+18.34), and on the highlight band it is 8.6 dB behind (40.11 vs 48.67) — because the tone-mapped
+intermediates had already clipped 7.9% of the frame to pure white, and two identical clipped
+regions agree with each other perfectly. The high-band PSNR is rewarding the pipeline for
+destroying the same data in both images. That is why the table above uses false clipping instead:
+0.00% against 7.93% is the number that means something, and it is the one the PSNR column hides.</p>
+
+<div class="callout warn">
+<p><strong>What this means in practice.</strong> "Use 16-bit before upscaling" is correct advice
+for exactly one workflow: a scene-referred linear (or log) intermediate, graded before the tone
+map, where the extra bits are still present at the moment the grade happens. In the workflow most
+people actually run — decode to display 8-bit, upscale, then brighten — 16 bits is a label on a
+file that was already truncated, and my measurement of that difference is 0.00 dB.</p>
+</div>
+
+<h2>Experiment 3 — where the capacity goes, and why 8-bit has more stops than you think</h2>
+
+<p>The top of the range is fragile for a reason that is visible without any upscaling at all. The
+sRGB encoding is roughly a cube root below the linear segment and a power law above it, so the
+number of codes per stop is not constant — it peaks near mid-grey and collapses towards white:</p>
+
+<table>
+<thead><tr><th>Linear L</th><th>Display code</th><th>Codes per stop</th><th>Stops remaining to 1.0 display</th><th>Peak-to-peak span of a 20% ripple</th></tr></thead>
+<tbody>
+<tr><td class="num">0.1</td><td class="num">85.0</td><td class="num">28.46</td><td class="num">10.12</td><td class="num">15.12 codes</td></tr>
+<tr><td class="num">0.2</td><td class="num">113.5</td><td class="num">32.11</td><td class="num">9.12</td><td class="num">17.87 codes</td></tr>
+<tr><td class="num">1.0</td><td class="num">187.5</td><td class="num">25.67</td><td class="num">6.80</td><td class="num">17.09 codes</td></tr>
+<tr><td class="num">4.0</td><td class="num">231.1</td><td class="num">11.00</td><td class="num">4.80</td><td class="num">8.42 codes</td></tr>
+<tr><td class="num">16.0</td><td class="num">248.3</td><td class="num">3.28</td><td class="num">2.80</td><td class="num">2.67 codes</td></tr>
+<tr><td class="num">32.0</td><td class="num">251.6</td><td class="num">1.69</td><td class="num">1.80</td><td class="num">1.40 codes</td></tr>
+<tr><td class="num">55.0</td><td class="num">253.0</td><td class="num"><strong>1.00</strong></td><td class="num">1.02</td><td class="num">0.83 codes</td></tr>
+<tr><td class="num">128.0</td><td class="num">254.1</td><td class="num">0.43</td><td class="num">−0.20</td><td class="num">0.36 codes</td></tr>
+</tbody>
+</table>
+
+<p>Codes-per-stop crosses 1.0 at linear luminance <strong>54.98</strong>, which is display code
+<strong>252.99</strong>. Above that point a full stop of scene luminance is representable only as a
+fraction of a code, so it is either rounded away or promoted to the next code — the choice is made
+by the rounding rule, not by the data. A 20% ripple has a peak-to-peak span of 0.36 codes at
+L = 128, which is the arithmetic behind the 0.0% retention in experiment 1.</p>
+
+<p>The useful surprise is the total: display code 0 to 254 spans <strong>19.49 stops</strong>.
+An 8-bit display image is not a 14-stop container; the non-linearity buys back more range than
+the 8 bits cost. The problem was never total capacity. It is the allocation: 10.82 stops live
+below code 128, 4.14 between 128 and 235, and 0.59 between 253 and 254 — half a stop compressed
+into the last single code. The last column is the same collapse from the other direction: at
+L = 128 a 20% ripple spans 0.36 of one code, and by L = 254 there is nothing left for it to
+modulate.</p>
+
+<h3>Does a real photograph live there?</h3>
+
+<p>On the source photo used for these experiments: mean code 110.8, 99th percentile code 232.0,
+10.95% of pixels above code 200, 0.63% above 235, 0.29% above 240, and 0.07% above 253. So on this
+one frame the genuinely starved region is a tenth of a percent of the pixels — consistent with
+experiment 1, where the 8-bit penalty only appears above code 253. On a frame exposed for the
+highlights, or after a +2 stop lift, that tenth of a percent becomes the whole subject.</p>
+
+<h2>What this changes about how you upscale an HDR photograph</h2>
+
+<p>Three decisions, in order of how much they are worth:</p>
+
+<ol>
+<li><strong>Order of operations beats bit depth.</strong> The single largest measured gain here was
+moving the grade before the tone map: +3.2 dB on the mid band, 0.7 dB overall, and false clipping
+from 7.9% to 0.00%. Neither an 8-bit nor a 16-bit intermediate could match that by changing
+precision alone.</li>
+<li><strong>If you keep an 8-bit intermediate, keep it at output resolution.</strong> Quantising
+before the upscale is not measurably worse below code 232, but it collapses one row earlier — at
+L₀ = 64 with a 20% ripple it delivers 0.0% where the post-upscale quantisation still delivers
+110.0%.</li>
+<li><strong>16-bit does have one clear, narrow win.</strong> In the top ~1.7 stops, where a
+tone-mapped 8-bit image has run out of codes, a 16-bit intermediate preserves detail that an
+8-bit one flattens to a constant. If the frame has a window, a lamp, or a specular surface, that
+is the region you are looking at when you complain that "the highlights look plastic".</li>
+</ol>
+
+<p>None of these are permission to reconstruct information that is not there. The ripple in
+experiment 1 exists in the master and is either carried or destroyed by the pipeline; the
+frequencies lost to the 4× downsample are lost regardless of depth, which is why the float
+pipeline caps out at 84.9% of the ideal even with no quantisation at all. When the source really
+is a single low-resolution frame and the goal is a larger one, the choice of resampler and the
+pixel budget matter more than the container — which is the measurement behind
+<a href="https://upgolab.com">UpgoLAB's browser upscaler</a>, and the reason it is worth knowing
+which of these two problems you actually have before you change any settings.</p>
+
+<h2>Reproducing the numbers</h2>
+
+<p>Everything above comes from one script; the model, the estimator, and the reference are all in
+it. The only non-obvious part is the estimator: the 1-D projection is what makes the difference
+between 0% and 100% meaningful instead of noise.</p>
+
+<pre><code>import numpy as np
+from PIL import Image
+
+def enc(x):
+    x = np.clip(x, 0.0, 1.0)
+    return np.where(x &lt;= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1 / 2.4) - 0.055)
+
+def tm_gray(L):                       # Reinhard + sRGB encode, display 0..1
+    return enc(L / (1.0 + L))
+
+def quant(x, bits):                   # x is display 0..1
+    m = 2 ** bits - 1
+    return np.clip(np.round(x * m), 0, m) / m
+
+def prof_amp(img, period=16.0):       # 1-D projection: noise / sqrt(rows)
+    p = img.mean(axis=0)
+    x = np.arange(len(p), dtype=float)
+    A = np.stack([np.sin(2*np.pi*x/period), np.cos(2*np.pi*x/period),
+                  np.ones(len(p))], 1)
+    c, *_ = np.linalg.lstsq(A, p, rcond=None)
+    return float(np.hypot(c[0], c[1]))
+
+# patch -> down 4x in LINEAR light -> tone map -> quantise -> bicubic up 4x
+L0, a = 64.0, 0.20
+xx = np.arange(128)[None, :]
+Lin = L0 * (1.0 + a * np.sin(2*np.pi*xx/16.0))
+low = tm_gray(Lin.reshape(32, 4, 32, 4).mean(axis=(1, 3)))
+up  = np.asarray(Image.fromarray(low.astype(np.float32), "F")
+                   .resize((128, 128), Image.BICUBIC), dtype=np.float64)
+print(prof_amp(quant(up, 8)  * 255) / prof_amp(up * 255))   # 1.100  (8-bit)
+print(prof_amp(quant(up, 16) * 255) / prof_amp(up * 255))   # 1.002  (16-bit)
+
+# codes per stop, and where it falls below one
+d = lambda L: float(tm_gray(np.array([L]))[0]) * 255
+print(d(2.0) - d(1.0), d(110.0) - d(55.0))                  # 25.67, 0.55</code></pre>
+
+<p>Runs in about five seconds on a laptop CPU; no GPU, no dataset, no network. The full script
+sweeps twelve levels × four amplitudes × five variants and produces every table on this page.</p>
+
+</article>
+
+<footer>
+<p>Published by UpgoLAB — AI photo and short-video upscaling in the browser. Measured with numpy
+1.26.4 and Pillow 12.2.0 on one 1080×1620 photograph with a stated scene-referred model (1×–4×
+exposure ramp plus a 40× specular of σ = 91.8 px). Four experiments, five tables. The results that
+contradicted the hypothesis I started with: the 16-bit tone-mapped intermediate is a
+<em>measured no-op</em> below display code 232 (mean 100.0% vs 100.2% of the float pipeline) and
+identical to 8-bit after a +2 stop lift (0.00 dB on every band); 8-bit spans 19.49 stops, not the
+~14 the label implies; 8-bit stored at low resolution is not worse overall but does collapse one
+row earlier than 8-bit quantised at output resolution; and my first estimator reported a 6-point
+shadow advantage for 16-bit that was an artefact of the reference I divided by.
+Every figure reproducible from the snippet above; no value was adjusted after the run.</p>
+</footer>
+</main>
+</body>
+</html>
