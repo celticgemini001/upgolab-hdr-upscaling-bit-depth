@@ -114,7 +114,7 @@ fitting.</p>
 
 <p>The figure of merit is <strong>retention relative to the float pipeline</strong>, not relative
 to the ideal. The float pipeline itself only delivers 83.9–84.9% of the ideal amplitude, and that
-15% is interpolation loss common to every variant; dividing it out leaves bit depth alone.</p>
+15% is interpolation loss common to every variant; dividing it out leaves <a href="https://celticgemini001.github.io/upgolab-gamma-vs-linear-light/">bit depth</a> alone.</p>
 
 <table>
 <thead><tr><th>Linear L₀</th><th>Display code</th><th>Codes/stop</th><th>Ripple span (codes)</th><th>8-bit, quantise after upscale</th><th>8-bit, stored at low res</th><th>16-bit</th></tr></thead>
@@ -142,7 +142,7 @@ pipeline at the same level, so 100% means "bit depth cost you nothing", not "per
 above 100%, because rounding can push an already-quantised signal up as easily as down. One row
 later, at code 253.3, the ripple spans 0.71 of a single code and the same pipeline delivers 0.0%.
 There is no gradual degradation to plan around; there is a threshold, and it sits where the ripple
-span drops below one code. Everything above it is not "slightly worse", it is empty. The 16-bit
+span drops below one code. Everything above it is not "slightly worse", it is empty. The <a href="https://celticgemini001.github.io/upgolab-bit-depth-banding/">16-bit</a>
 intermediate at the same level delivers 100.2%.</p>
 
 <h3>A 16-bit tone-mapped intermediate is nearly a no-op below the cliff</h3>
@@ -352,6 +352,21 @@ print(d(2.0) - d(1.0), d(110.0) - d(55.0))                  # 25.67, 0.55</code>
 sweeps twelve levels × four amplitudes × five variants and produces every table on this page.</p>
 
 
+
+
+</article>
+<footer>
+<p>Published by UpgoLAB — AI photo and short-video upscaling in the browser. Measured with numpy
+1.26.4 and Pillow 12.2.0 on one 1080×1620 photograph with a stated scene-referred model (1×–4×
+exposure ramp plus a 40× specular of σ = 91.8 px). Four experiments, five tables. The results that
+contradicted the hypothesis I started with: the 16-bit tone-mapped intermediate is a
+<em>measured no-op</em> below display code 232 (mean 100.0% vs 100.2% of the float pipeline) and
+identical to 8-bit after a +2 stop lift (0.00 dB on every band); 8-bit spans 19.49 stops, not the
+~14 the label implies; 8-bit stored at low resolution is not worse overall but does collapse one
+row earlier than 8-bit quantised at output resolution; and my first estimator reported a 6-point
+shadow advantage for 16-bit that was an artefact of the reference I divided by.
+Every figure reproducible from the snippet above; no value was adjusted after the run.</p>
+
 <nav class="sisternav" aria-label="More measured upscaling guides">
 <p>More measured guides</p>
 <ul>
@@ -382,20 +397,6 @@ sweeps twelve levels × four amplitudes × five variants and produces every tabl
   <li><a href="https://celticgemini001.github.io/">All upscaling measurements, start here</a></li>
 </ul>
 </nav>
-
-</article>
-
-<footer>
-<p>Published by UpgoLAB — AI photo and short-video upscaling in the browser. Measured with numpy
-1.26.4 and Pillow 12.2.0 on one 1080×1620 photograph with a stated scene-referred model (1×–4×
-exposure ramp plus a 40× specular of σ = 91.8 px). Four experiments, five tables. The results that
-contradicted the hypothesis I started with: the 16-bit tone-mapped intermediate is a
-<em>measured no-op</em> below display code 232 (mean 100.0% vs 100.2% of the float pipeline) and
-identical to 8-bit after a +2 stop lift (0.00 dB on every band); 8-bit spans 19.49 stops, not the
-~14 the label implies; 8-bit stored at low resolution is not worse overall but does collapse one
-row earlier than 8-bit quantised at output resolution; and my first estimator reported a 6-point
-shadow advantage for 16-bit that was an artefact of the reference I divided by.
-Every figure reproducible from the snippet above; no value was adjusted after the run.</p>
 </footer>
 </main>
 </body>
