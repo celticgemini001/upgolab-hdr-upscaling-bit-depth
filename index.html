@@ -278,6 +278,108 @@ one frame the genuinely starved region is a tenth of a percent of the pixels —
 experiment 1, where the 8-bit penalty only appears above code 253. On a frame exposed for the
 highlights, or after a +2 stop lift, that tenth of a percent becomes the whole subject.</p>
 
+<h2 id="exp4">Experiment 4 — a real photograph can't lend you precision it never had</h2>
+
+<p>Experiments 1 to 3 build their scene from a synthetic ripple and a synthetic patch. That is the
+right instrument for isolating a mechanism, but it hides an unfair advantage: the reference in
+those tests carries more than 8 bits of genuine precision, because it was assembled
+arithmetically rather than decoded from a file. No JPEG on disk has that property.</p>
+
+<p>So this experiment refuses the generous reference. The source is a real 1080×1620 8-bit sRGB
+JPEG, quantised to 8 bits at the start and never given synthetic headroom. Reference is the same
+8-bit source pushed through an identical grade/tone-map/encode chain with <em>no resample at
+all</em>. The only error being measured is the round trip plus the intermediate precision.
+That is the honest question: on material you actually have, does the extra bits buy anything?</p>
+
+<table>
+<thead><tr>
+<th>Intermediate</th><th>Lift</th><th>PSNR vs no-resample</th><th>Distinct levels in calm band</th><th>Mean flat run</th>
+</tr></thead>
+<tbody>
+<tr><td>8-bit, linear</td><td class="num">+0 stops</td><td class="num">28.65 dB</td><td class="num">126</td><td class="num">6.34 px</td></tr>
+<tr><td>8-bit, sRGB-encoded</td><td class="num">+0 stops</td><td class="num">28.76 dB</td><td class="num">189</td><td class="num">5.05 px</td></tr>
+<tr><td>16-bit, linear</td><td class="num">+0 stops</td><td class="num">28.76 dB</td><td class="num">189</td><td class="num">5.03 px</td></tr>
+<tr><td>8-bit, linear</td><td class="num">+3 stops</td><td class="num">24.13 dB</td><td class="num">86</td><td class="num">6.64 px</td></tr>
+<tr><td>8-bit, sRGB-encoded</td><td class="num">+3 stops</td><td class="num">24.68 dB</td><td class="num">153</td><td class="num">5.30 px</td></tr>
+<tr><td>16-bit, linear</td><td class="num">+3 stops</td><td class="num">24.69 dB</td><td class="num"><strong>223</strong></td><td class="num">5.01 px</td></tr>
+</tbody>
+</table>
+
+<p>(Grade applied before the tone map in every row above; the calm band is the
+240-row contiguous strip with the lowest mean horizontal gradient, rows 1267–1507, mean
+|Δx| = 2.12 codes against 3.46 for the whole image. Reference distinct-level counts for the same
+rows: 189 at +0 stops, 150 at +3 stops.)</p>
+
+<h3>The number that matters is 0.007</h3>
+
+<p>Going from an 8-bit sRGB intermediate to a 16-bit linear one at +3 stops moves PSNR by
+<strong>+0.007 dB</strong>. That is not a rounding quirk — it is four orders of magnitude below
+the 0.33 dB you get from merely choosing the better grade order at the same bit depth. In the
+same run, measured end-to-end against the original photograph, the fair 16-bit-versus-8-bit-sRGB
+gap was <strong>+0.003 dB</strong>.</p>
+
+<p>The bits are real. They are simply spent on the resampler's own arithmetic error, which the
+source already bounds. A 16-bit container around an 8-bit photograph does not recover the 8-bit
+photograph's lost states; it carries the interpolation more exactly, and the interpolation is the
+noisier of the two terms.</p>
+
+<h3>But 16-bit does change the histogram — in the wrong direction</h3>
+
+<p>Look at the distinct-level column at +3 stops. The reference has 150 levels in that band. The
+8-bit sRGB chain reproduces 153 — close to one-for-one. The 16-bit chain produces
+<strong>223</strong>, which is 73 levels that do not exist in the source.</p>
+
+<p>Those extra levels are why a 16-bit lift <em>looks</em> smoother: the histogram is finer, so
+there is less visible stair-stepping in a gradient. But it is finer around a curve the pipeline
+invented, not around the curve that was in the photograph. This is the same mechanism as a
+sharpening halo — a plausible-looking structure with no counterpart in the original — and it is
+why the flat-run metric improves only 0.47 px per row while the level count rises by 49%. If you
+are grading to a look, that is a legitimate aesthetic tool. If you are grading to preserve the
+shot, it is fabrication, and the PSNR column is telling you so.</p>
+
+<h3>Reproduce it</h3>
+
+<pre><code>import numpy as np
+from PIL import Image
+
+srgb_dec = lambda x: np.where(x &lt;= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4)
+
+def box_down(img, f):                      # average in LINEAR light
+    h, w = img.shape[:2]
+    im = img[:h // f * f, :w // f * f]
+    return im.reshape(h // f, f, w // f, f, im.shape[2]).mean(axis=(1, 3))
+
+def bicubic_up(img, f):                    # float32 round trip per channel
+    h, w, c = img.shape
+    return np.stack([np.asarray(Image.fromarray(img[:, :, i].astype(np.float32), "F")
+                                .resize((w * f, h * f), Image.BICUBIC), np.float64)
+                     for i in range(c)], axis=2)
+
+lin  = srgb_dec(np.asarray(Image.open("photo.jpg").convert("RGB")) / 255.0)
+down = box_down(lin, 3)                    # the only information that exists
+q16  = np.round(np.clip(down, 0, 1) * 65535) / 65535     # vs 255 for the 8-bit arm
+up   = np.round(np.clip(bicubic_up(q16, 3), 0, 1) * 65535) / 65535
+
+graded = np.clip(up * 2.0 ** 3, 0, None)   # +3 stops, BEFORE the tone map
+tm     = graded / (1.0 + graded)           # filmic rolloff, keeps the highlights
+out    = np.round(np.where(tm &lt;= 0.0031308, tm * 12.92,
+                           1.055 * tm ** (1 / 2.4) - 0.055) * 255) / 255</code></pre>
+
+<p>Swap the <code>65535</code> for <code>255</code> to get the 8-bit arm; swap the quantisation
+target for <code>srgb_dec(np.round(srgb_enc(x) * 255) / 255)</code> to get the fair 8-bit-sRGB
+arm. The flat-run and distinct-level functions are a diff on each row of the green channel,
+restricted to rows whose mean |Δx| falls below the 40th percentile.</p>
+
+<div class="note">
+<p><strong>What this adds to the earlier results.</strong> Experiment 3 showed that 16 bits wins
+in the top ~1.7 stops when the values are still scene-referred. This experiment shows the boundary
+of that win: it needs the source to actually carry the range. Feed it an 8-bit JPEG and the
+advantage in fidelity collapses to 0.007 dB, while the level count inflates past the reference.
+The practical rule survives but narrows — keep 16 bits for a real scene-referred or log
+intermediate that you will grade hard, and stop paying for it when the only thing above 8 bits is
+the resampler's own arithmetic.</p>
+</div>
+
 <h2>What this changes about how you upscale an HDR photograph</h2>
 
 <p>Three decisions, in order of how much they are worth:</p>
