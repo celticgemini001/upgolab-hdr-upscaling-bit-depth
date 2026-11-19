@@ -177,7 +177,7 @@ for L0, a in CASES:
     r = [x for x in rows if x["L0"] == L0 and x["rel_amp"] == a]
     line = "%-14s" % L0
     for n, _ in ARMS:
-        line += " %-9s" % [x for x in r if x["arm"] == n][0]["h3"]
+        line += " %-9.3f" % [x for x in r if x["arm"] == n][0]["h3"]   # 3dp, as published
     print(line)
 
 # ---- Q4: the noise spectrum. White noise decays as 1/k under a kxk box average.
