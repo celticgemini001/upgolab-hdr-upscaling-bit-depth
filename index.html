@@ -15,8 +15,8 @@
  "headline":"Upscaling HDR Photographs: What 16-bit Actually Buys You, Measured",
  "author":{"@type":"Person","name":"UpgoLAB"},
  "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
- "description":"Measured detail retention through 4x down/4x up for 8-bit and 16-bit intermediates, codes-per-stop along a display tone curve, and the cost of grading after tone mapping instead of before.",
- "datePublished":"2026-11-16"}
+ "description":"Measured detail retention through 4x down/4x up for 8-bit and 16-bit intermediates, codes-per-stop along a display tone curve, the cost of grading after tone mapping instead of before, and what TPDF dither does (and does not) recover.",
+ "datePublished":"2026-11-16","dateModified":"2026-11-19"}
 </script>
 <style>
 :root{--ink:#16181d;--mut:#5b6270;--line:#e2e5ea;--acc:#0a58ca;--bg:#fff}
@@ -336,6 +336,232 @@ sharpening halo — a plausible-looking structure with no counterpart in the ori
 why the flat-run metric improves only 0.47 px per row while the level count rises by 49%. If you
 are grading to a look, that is a legitimate aesthetic tool. If you are grading to preserve the
 shot, it is fabrication, and the PSNR column is telling you so.</p>
+
+<h2>Experiment 5 — dither: the mitigation everyone recommends, measured</h2>
+
+<p>Everything above tests bit depth. None of it tests the thing a colourist actually reaches for
+when a gradient bands: dither. It is the standard advice, it is cheap, and if you search for
+"8-bit banding" you will find it in every thread. So I measured it, in the same framework, and the
+result is more interesting than "dither helps" — it helps, and it costs exactly what it is
+supposed to cost, and it is useless in the one place the page above says the pipeline breaks.</p>
+
+<p>The dither is TPDF — triangular, ±1 LSB, the standard choice, because rectangular (RPDF) dither
+only decorrelates the error without removing the noise modulation, and the literature has been
+consistent on that for thirty years. The seed is fixed (<code>20261119</code>) so a rerun
+reproduces every digit.</p>
+
+<h2>Experiment 5a — dither recovers the fundamental but not the shape</h2>
+
+<p>Same patch, same estimator as Experiment 1: a sine of period 16 px at four luminance levels,
+box-downsampled 4× in linear light, tone-mapped, quantised, bicubic-upsampled 4×. The ripple
+amplitude is read from the column-mean profile.</p>
+
+<table>
+<thead><tr><th>L₀ linear</th><th>Display code</th><th>Ripple span (codes)</th><th>8-bit round</th><th>8-bit + TPDF</th><th>8-bit after upscale</th><th>8-bit + TPDF after upscale</th></tr></thead>
+<tbody>
+<tr><td class="num">0.005</td><td class="num">15.4</td><td class="num">3.70</td><td class="num">95.3%</td><td class="num">101.9%</td><td class="num">92.3%</td><td class="num">100.2%</td></tr>
+<tr><td class="num">0.01</td><td class="num">25.3</td><td class="num">1.22</td><td class="num">96.2%</td><td class="num">96.9%</td><td class="num">91.3%</td><td class="num">99.2%</td></tr>
+<tr><td class="num">0.02</td><td class="num">38.2</td><td class="num">1.61</td><td class="num">115.6%</td><td class="num">98.7%</td><td class="num">108.9%</td><td class="num">100.4%</td></tr>
+<tr><td class="num">0.05</td><td class="num">61.6</td><td class="num">2.26</td><td class="num">116.3%</td><td class="num">99.6%</td><td class="num">108.3%</td><td class="num">99.6%</td></tr>
+<tr><td class="num">0.20</td><td class="num">113.5</td><td class="num">3.34</td><td class="num">105.7%</td><td class="num">99.6%</td><td class="num">91.1%</td><td class="num">100.0%</td></tr>
+</tbody>
+</table>
+
+<p>Read the plain 8-bit column at L₀ = 0.02 and 0.05: <strong>115.6%</strong> and
+<strong>116.3%</strong>. Retention above 100% of the float arm is not extra detail. A sine whose
+peak-to-peak span is 1.6 codes gets quantised to a staircase, and a staircase read through the
+period-16 fundamental has a <em>larger</em> first harmonic than the sine it replaced — the same
+aliasing that makes a 3-level wave look "louder" than a smooth one. The metric is measuring the
+staircase, not the signal.</p>
+
+<p>Dither fixes that artifact: 98.7% and 99.6%, i.e. the fundamental is now honest. To show that
+the 115% was indeed a shape artifact rather than a fluke, I fit the third harmonic as well. A
+clean sine has h₃ ≈ 0 at every luminance; a staircase does not:</p>
+
+<table>
+<thead><tr><th>L₀ linear</th><th>float</th><th>8-bit round</th><th>8-bit + TPDF</th><th>8-bit after upscale</th><th>8-bit + TPDF after upscale</th></tr></thead>
+<tbody>
+<tr><td class="num">0.005</td><td class="num">0.084</td><td class="num">0.084</td><td class="num">0.083</td><td class="num">0.123</td><td class="num">0.087</td></tr>
+<tr><td class="num">0.01</td><td class="num">0.084</td><td class="num">0.084</td><td class="num">0.082</td><td class="num"><strong>0.299</strong></td><td class="num">0.088</td></tr>
+<tr><td class="num">0.02</td><td class="num">0.084</td><td class="num">0.088</td><td class="num">0.084</td><td class="num">0.036</td><td class="num">0.087</td></tr>
+<tr><td class="num">0.05</td><td class="num">0.084</td><td class="num">0.081</td><td class="num">0.083</td><td class="num">0.085</td><td class="num">0.086</td></tr>
+<tr><td class="num">0.20</td><td class="num">0.084</td><td class="num">0.084</td><td class="num">0.084</td><td class="num">0.111</td><td class="num">0.087</td></tr>
+</tbody>
+</table>
+
+<p>The 0.084 floor is the box filter's own passband rolloff — every clean arm sits on it. The
+outlier is quantise-after-upscale at L₀ = 0.01: h₃ = <strong>0.299</strong>, three and a half
+times the floor. That is a 1.2-code span quantised on the 128-px grid, and it turns a smooth sine
+into something measurably non-sinusoidal. Dither at that same point removes it (0.088), which is
+the strongest single argument for dithering: not that it adds detail, but that it stops the
+quantiser from creating structure the photograph does not contain.</p>
+
+<h2>Experiment 5b — the price: 0.5 codes of noise, everywhere, by construction</h2>
+
+<p>Per-pixel RMSE against the float arm, in display codes:</p>
+
+<table>
+<thead><tr><th>L₀ linear</th><th>8-bit round</th><th>8-bit + TPDF</th><th>8-bit after upscale</th><th>8-bit + TPDF after upscale</th></tr></thead>
+<tbody>
+<tr><td class="num">0.005</td><td class="num">0.300</td><td class="num">0.428</td><td class="num">0.347</td><td class="num">0.502</td></tr>
+<tr><td class="num">0.01</td><td class="num">0.227</td><td class="num">0.402</td><td class="num">0.258</td><td class="num">0.503</td></tr>
+<tr><td class="num">0.02</td><td class="num">0.222</td><td class="num">0.406</td><td class="num">0.292</td><td class="num">0.501</td></tr>
+<tr><td class="num">0.05</td><td class="num">0.324</td><td class="num">0.413</td><td class="num">0.327</td><td class="num">0.500</td></tr>
+<tr><td class="num">0.20</td><td class="num">0.281</td><td class="num">0.412</td><td class="num">0.272</td><td class="num">0.502</td></tr>
+</tbody>
+</table>
+
+<p>Dither raises RMSE from 0.22–0.32 codes to 0.40–0.41 before the upscale and to exactly 0.50
+after it. The arithmetic checks out: a TPDF dither of ±1 LSB is triangular on [−1, +1] LSB, so its
+RMS is √(2/12) = <strong>0.408</strong> codes. Rounding alone contributes the 0.22–0.32 you see in
+the first column. The two are independent, so the sum is
+√(0.408² + 0.28²) = 0.49 — and the measured figure is 0.50. <strong>Dither is a trade with a fixed
+exchange rate: you pay half a code of noise to buy back a code of structure.</strong> It cannot be
+free, because the quantiser has to output one of 256 values and the truth is between two of them.</p>
+
+<h2>Experiment 5c — and here is why dithering before the upscale is wrong</h2>
+
+<p>This is the part the advice never covers. If your pipeline is <em>downsample → 8-bit → upscale</em>,
+the natural place to dither is at the 8-bit step, before the resampler. That is also the worst place,
+because a resampler is a low-pass filter and dither is white noise: the filter keeps the part of the
+noise that is below its cutoff and throws away the part that is above. What survives is not fine
+grain. It is low-frequency blotches — exactly the thing dither was supposed to prevent.</p>
+
+<p>The measurement is the RMS of the output noise after a k×k box average, normalised by its RMS at
+k = 1. White noise decays as 1/k, so a k = 16 average of true dither should land near 0.063:</p>
+
+<table>
+<thead><tr><th>Arm</th><th>k=1</th><th>k=2</th><th>k=4</th><th>k=8</th><th>k=16</th></tr></thead>
+<tbody>
+<tr><td>white noise, theory</td><td class="num">1.000</td><td class="num">0.500</td><td class="num">0.250</td><td class="num">0.125</td><td class="num">0.063</td></tr>
+<tr><td>8-bit round, low res</td><td class="num">1.000</td><td class="num">0.948</td><td class="num">0.925</td><td class="num">0.330</td><td class="num">0.042</td></tr>
+<tr><td>8-bit + dither, low res</td><td class="num">1.000</td><td class="num">0.956</td><td class="num"><strong>0.899</strong></td><td class="num">0.552</td><td class="num"><strong>0.300</strong></td></tr>
+<tr><td>8-bit after upscale</td><td class="num">1.000</td><td class="num">0.712</td><td class="num">0.344</td><td class="num">0.198</td><td class="num">0.073</td></tr>
+<tr><td>8-bit + dither after upscale</td><td class="num">1.000</td><td class="num">0.499</td><td class="num">0.255</td><td class="num">0.126</td><td class="num">0.069</td></tr>
+</tbody>
+</table>
+
+<p>Dither applied <em>after</em> the upscale tracks white noise to three decimals: 0.499 against
+0.500, 0.255 against 0.250, 0.126 against 0.125. Dither applied <em>before</em> it does not: at
+k = 4 the surviving noise is <strong>0.899</strong> — nine tenths of the original RMS, where white
+noise would have kept a quarter. Near-100% persistence under a 4-px average means the noise has a
+correlation length longer than 4 px. That is the blotch, stated as a number, and it is worse than
+not dithering at all in that band (0.925 vs 0.899 is a wash at k = 4, but at k = 16 dither-before
+is 0.300 against 0.042 — seven times more low-frequency noise than plain rounding).</p>
+
+<h2>Experiment 5d — the one case where dither really does earn its keep</h2>
+
+<p>Nothing above is a gradient. Banding is a gradient phenomenon, so here is a real one: a 1024-px
+ramp through a sky-like range, 0.02 → 0.05 in linear light, which is 25 distinct display codes
+across 1024 px, so roughly 41 px per step and a visible band edge at every one of them.</p>
+
+<table>
+<thead><tr><th>Arm</th><th>Distinct codes</th><th>Longest flat run</th><th>Flat pixels</th><th>RMSE (codes)</th></tr></thead>
+<tbody>
+<tr><td>float / 8-bit round</td><td class="num">25</td><td class="num">56 px</td><td class="num">97.7%</td><td class="num">0.000</td></tr>
+<tr><td>8-bit + TPDF</td><td class="num">25</td><td class="num"><strong>16 px</strong></td><td class="num">53.4%</td><td class="num">0.595</td></tr>
+<tr><td>6-bit round</td><td class="num">7</td><td class="num">206 px</td><td class="num">99.4%</td><td class="num">1.234</td></tr>
+<tr><td>6-bit + TPDF</td><td class="num">8</td><td class="num"><strong>17 px</strong></td><td class="num">55.3%</td><td class="num">2.069</td></tr>
+</tbody>
+</table>
+
+<p>This is the result that matters in practice. The number of distinct codes does not change — 25
+before, 25 after, because the ramp really does pass through 25 codes. What changes is the
+<em>length of each flat run</em>: <strong>56 px → 16 px</strong> at 8 bits. A band edge is visible
+when the run is long enough for the eye to lock onto the step; 56 px across a 1024-px span is a
+hard line, 16 px is dithered grain that the same eye integrates away. The cost is 0.595 codes of
+noise, which at this luminance is below the visibility threshold for grain.</p>
+
+<p>The 6-bit rows are the control, and they are the reason this section is here rather than being
+folded into a footnote. At 6 bits the ramp has 7 levels and a 206-px flat run: that is not a
+gradient, it is a set of seven bands. Dither takes the run to 17 px — it makes the bands go away —
+and it does so at 2.07 codes of noise, which is large enough to see. <strong>Dither trades banding
+for grain, and the exchange only works while the grain is below the visibility threshold.</strong>
+At 8 bits it is; at 6 bits it is not. This is the same cliff Experiment 1 found, arriving from a
+different direction.</p>
+
+<h2>What Experiment 5 changes</h2>
+
+<p>Three things, and one of them contradicts the advice you will find everywhere:</p>
+
+<ol>
+<li><strong>Dither does not recover precision. It decorrelates the error.</strong> The 116%
+retention in Experiment 5a was an artifact of a staircase, and dither put it back to 99%. If you
+were expecting dither to rescue the top of the range where the codes-per-stop run out, it does
+not: at L₀ = 0.20 the ripple span is 3.34 codes and every arm is within 1% of the float. There is
+nothing to rescue.</li>
+<li><strong>Dither at the output, never at the intermediate.</strong> 0.899 persistence through a
+4-px average versus 0.255 is not a subtle difference; it is the difference between grain and
+blotches. If your pipeline quantises the low-resolution intermediate to 8 bits per channel and then
+upscales, dithering there manufactures low-frequency noise and then a filter smears it. Quantise
+in float or 16-bit through the resampler and apply TPDF once, at final output.</li>
+<li><strong>Dither is worth it for gradients, and only for gradients.</strong> A 56-px band edge
+becomes 16 px of grain for 0.6 codes. On a gradient that is the whole point. On the sine patches
+above, dither's only effect was to add 0.5 codes of noise to an already-honest fundamental.</li>
+</ol>
+
+<p>And the connection to bit depth is direct: 8-bit display gives you 16.9 codes per stop at
+L₀ = 0.02 (Experiment 1's table). Dither does not add codes, so it cannot widen the span; it only
+decides whether the codes you have land on a staircase or on grain. If you have fewer than ~2
+codes across the feature you are trying to preserve, no dither will help — the fix is upstream,
+either more bit depth before the tone map or a smaller scale factor, and that choice is the same
+one this page opened with.</p>
+
+<h3>Reproduce Experiment 5</h3>
+
+<pre><code>import numpy as np
+from PIL import Image
+
+rng = np.random.default_rng(20261119)      # fixed: rerun is byte-identical
+
+def q(x, bits):                            # plain rounding
+    m = 2 ** bits - 1
+    return np.clip(np.round(x * m), 0, m) / m
+
+def q_tpdf(x, bits):                       # TPDF dither, +-1 LSB
+    m = 2 ** bits - 1
+    n = (rng.random(x.shape) - rng.random(x.shape)) / m
+    return np.clip(np.round((x + n) * m), 0, m) / m
+
+def box_down(a, k):                        # average in linear light
+    h, w = a.shape
+    return a.reshape(h // k, k, w // k, k).mean(axis=(1, 3))
+
+def up(a, k):                              # bicubic, float32 round trip
+    h, w = a.shape
+    return np.asarray(Image.fromarray(a.astype(np.float32), "F")
+                      .resize((w * k, h * k), Image.BICUBIC), np.float64)
+
+def persistence(nz, k):                    # RMS after kxk average / RMS before
+    return float(np.sqrt((box_down(nz, k) ** 2).mean() / (nz ** 2).mean()))
+
+S, K, PER = 128, 4, 16.0
+yy, xx = np.mgrid[0:S, 0:S]
+master = 0.02 * (1.0 + 0.05 * np.sin(2 * np.pi * xx / PER))   # L0=0.02, a=0.05
+low = box_down(master, K)                                     # the only real data
+
+rein = lambda L: L / (1.0 + L)
+enc  = lambda v: np.where(v &lt;= 0.0031308, 12.92 * v,
+                          1.055 * np.power(np.clip(v, 0, 1), 1 / 2.4) - 0.055)
+disp = enc(rein(low))                                         # tone map, display code
+ref  = up(disp, K)                                            # float reference
+
+before = up(q_tpdf(disp, 8), K)      # dither at LOW res, then resample
+after  = q_tpdf(up(disp, K), 8)      # resample first, dither at OUTPUT
+plain  = up(q(disp, 8), K)
+
+for name, out in (("plain 8-bit", plain), ("dither before up", before),
+                  ("dither after up", after)):
+    nz = out - ref
+    print(name, [round(persistence(nz, k), 3) for k in (1, 2, 4, 8, 16)])
+# plain 8-bit        [1.0, 0.948, 0.925, 0.33, 0.042]
+# dither before up   [1.0, 0.956, 0.899, 0.552, 0.3]
+# dither after up    [1.0, 0.499, 0.255, 0.126, 0.069]</code></pre>
+
+<p>Change <code>K</code> and the persistence profile changes shape but not its ordering: dither-after
+always tracks 1/k, dither-before always sits above it in the low-frequency bands, and the gap widens
+with K. That is the whole finding, and it is the one thing about dither that a before/after screenshot
+will never show you.</p>
 
 <h3>Reproduce it</h3>
 
